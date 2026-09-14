@@ -21,6 +21,13 @@ export {
   type ServiceAnnouncementHandle,
 } from './announcement.ts'
 export { registerMultiProvider } from './register.ts'
+export {
+  applySessionPins,
+  SESSION_PIN_ENTRY_TYPE,
+  sessionPinsFromEntries,
+  type SessionPin,
+  type SessionPinHost,
+} from './session-pins.ts'
 export * from './auth-store.ts'
 export {
   createManagedIntegration,

@@ -31,7 +31,7 @@ If an account fails before visible output, the lift can cool it down and retry a
 | 🔐 | **Multiple credentials** | Store API keys and provider-native OAuth credentials per provider. |
 | 🪄 | **`/multilogin`** | Reuses Pi's searchable provider selector and login dialog, then opens a searchable settings-style pool manager for drilling into every row inline. |
 | 🔀 | **Four pool strategies** | Round robin, weighted round robin, least in flight, or priority failover. |
-| 🔃 | **`/switch-account`** | Ephemeral session pin to one pooled account for the current model—pool settings untouched. |
+| 🔃 | **`/switch-account`** | Session pin to one pooled account for the current model—restored when the session is resumed; pool settings untouched. |
 | 🧬 | **Upstream merge** | Optionally treats Pi's normal `/login`, `auth.json`, environment, or ambient credential as another account—editable inline like any stored account. |
 | 🩺 | **Health-aware leases** | Tracks in-flight work, failures, cooldowns, session affinity, and retry exclusions. |
 | 🛡️ | **Stream-safe failover** | Suppresses a rejected attempt's start/error events and retries only before user-visible output. |
@@ -104,7 +104,7 @@ Add as many accounts as you need from the same manager. Remove credentials from 
 | `/multilogout [provider]` | Remove an account saved by `/multilogin`. |
 | `/vprovider [id]` | Create and edit virtual providers that map one model across multiple provider models. |
 | `/accounts` | Inspect pool policy, account status, in-flight leases, failures, and cooldowns. |
-| `/switch-account [label]` | Pin this session to one pooled account of the current model's provider, or return to automatic selection. |
+| `/switch-account [label]` | Pin this session to one pooled account of the current model's provider, or return to automatic selection. The choice is restored the next time the session is resumed. |
 
 ## Pool strategies
 
@@ -148,11 +148,12 @@ Behavior details:
 
 `/switch-account` lists every account pooled under the current model's provider—including **Pi default (upstream)** while its credential is configured—and pins the choice to the current Pi session:
 
-- The pin is session-scoped and ephemeral. Pool strategy, affinity, weights, and priorities stay untouched, and the pin resets when Pi restarts.
+- The pin is session-scoped. Pool strategy, affinity, weights, and priorities stay untouched. Every switch is recorded in the session file as a custom entry that is never sent to the model, so resuming the session restores the last switched account instead of falling back to the pool strategy.
 - New requests from this session use the pinned account, even while the pool's session affinity is off.
-- If the pinned account cools down, another account serves temporarily and the session returns to it once it recovers. Removing or disabling the account drops the pin.
-- **Automatic**—or `/switch-account auto`—clears the pin so the pool strategy selects again.
+- If the pinned account cools down, another account serves temporarily and the session returns to it once it recovers. Removing or disabling the account drops the pin for the rest of the session.
+- **Automatic**—or `/switch-account auto`—clears the pin so the pool strategy selects again; the cleared state is recorded too, so a resumed session stays automatic.
 - `/switch-account work` switches directly when the label matches exactly or by unique prefix.
+- If the pinned account was removed or disabled before the session is resumed, the session warns once and falls back to automatic selection.
 
 In-flight requests keep their leased account; only new requests observe the switch. Sibling extensions can follow switches through the [`pi-multiprovider:service` event](#session-account-service-event).
 
@@ -277,7 +278,7 @@ For direct composition, the public package exports `MultiProviderService`, `lift
 - **Case-insensitive header replacement.** Selected auth replaces matching headers and can remove obsolete auth fields.
 - **Lease lifetime equals stream lifetime.** Success, failure, and cancellation release capacity exactly once.
 - **Provider re-registration is expected.** The extension re-lifts current provider objects before agent execution, covering dynamic model refreshes used by provider packages.
-- **Health is in memory.** Cooldowns and affinity reset when Pi reloads or replaces the extension runtime; credentials and pool settings persist.
+- **Health is in memory.** Cooldowns and implicit session affinity reset when Pi reloads or replaces the extension runtime; credentials, pool settings, and the `/switch-account` decisions recorded inside a session persist with it.
 
 Current limits:
 

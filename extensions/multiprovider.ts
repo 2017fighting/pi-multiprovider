@@ -17,6 +17,7 @@ import {
   visibleWidth,
 } from '@earendil-works/pi-tui'
 import {
+  applySessionPins,
   createManagedIntegration,
   createServiceAnnouncement,
   getMultiAuthPath,
@@ -34,12 +35,15 @@ import {
   type PublicAccountSnapshot,
   type SchedulerSettingsPatch,
   type SelectionPolicy,
+  type SessionPin,
   type VirtualModelTemplate,
   type VirtualProviderConfig,
   captureVirtualModelTemplate,
   createVirtualIntegrations,
   createVirtualProvider,
   healVirtualTemplates,
+  sessionPinsFromEntries,
+  SESSION_PIN_ENTRY_TYPE,
   virtualSchedulerId,
 } from '../src/index.ts'
 import { promptApiKeyCredential, probeSessionRuntime, selectLogin, showLoginDialog } from '../src/multilogin.ts'
@@ -561,6 +565,7 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
   const virtualProviders = new Map<string, Provider<Api>>()
   const virtualIntegrations = new Map<string, ProviderRegistration<VirtualBackendRef>>()
   let currentContext: ExtensionContext | undefined
+  let pendingSessionPins: SessionPin[] = []
 
   const effectiveIntegration = (providerId: string): AnyIntegration | undefined => {
     const managed = managedIntegrations.get(providerId)
@@ -864,6 +869,27 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
   // already be in the registry for session resume to find them.
   await refreshVirtual()
 
+  // /switch-account records each explicit pin — and each return to automatic
+  // selection — as a custom session entry. Resuming the session replays the
+  // last decision so it keeps the operator's chosen account instead of falling
+  // back to the pool strategy; account health and implicit affinity stay in
+  // memory. Pools whose scheduler is not registered yet stay pending until a
+  // later reconcile can apply them.
+  const applyRecordedPins = async (ctx: ExtensionContext): Promise<void> => {
+    if (pendingSessionPins.length === 0) return
+    pendingSessionPins = await applySessionPins(pendingSessionPins, {
+      hasPool: poolId => service.hasProvider(poolId),
+      pin: (poolId, key, accountId) => service.pinAccount(poolId, key, accountId),
+      clear: (poolId, key) => service.clearAffinity(poolId, key),
+    }, (pin, error) => {
+      const target = pin.label === undefined ? pin.accountId ?? '' : `"${pin.label}"`
+      ctx.ui.notify(
+        `multiprovider: pinned account ${target} could not be restored for "${pin.pool}": ${errorText(error)}`,
+        'warning',
+      )
+    })
+  }
+
   const reconcile = async (ctx: ExtensionContext): Promise<void> => {
     service.updateSchedulerDefaults(await store.getSchedulerSettings())
     await refreshVirtual()
@@ -875,6 +901,7 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
     ])
     for (const providerId of ids) await install(providerId, ctx)
     await refreshVirtual()
+    await applyRecordedPins(ctx)
   }
 
   const unsubscribeRegistration = pi.events.on(MULTIPROVIDER_REGISTER_EVENT, value => {
@@ -887,6 +914,7 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
 
   pi.on('session_start', async (_event, ctx) => {
     currentContext = ctx
+    pendingSessionPins = sessionPinsFromEntries(ctx.sessionManager.getEntries())
     await reconcile(ctx)
     announceService()
   })
@@ -905,6 +933,7 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
     virtualProviders.clear()
     virtualIntegrations.clear()
     virtualConfigs.clear()
+    pendingSessionPins = []
     currentContext = undefined
   })
 
@@ -1207,6 +1236,7 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
 
       if (automatic) {
         service.clearAffinity(poolId, affinityKey)
+        pi.appendEntry(SESSION_PIN_ENTRY_TYPE, { pool: poolId, key: affinityKey })
         await announceSwitch()
         ctx.ui.notify(
           pool.affinity
@@ -1229,6 +1259,14 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
         ctx.ui.notify(`Could not switch account: ${errorText(error)}`, 'error')
         return
       }
+      // Recorded so a resumed session re-applies the switch instead of falling
+      // back to the pool strategy.
+      pi.appendEntry(SESSION_PIN_ENTRY_TYPE, {
+        pool: poolId,
+        key: affinityKey,
+        accountId: account.id,
+        label: account.label,
+      })
       await announceSwitch()
       const cooldown = account.cooldownUntil === undefined
         ? ''
