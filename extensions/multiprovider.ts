@@ -877,6 +877,7 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
   // later reconcile can apply them.
   const applyRecordedPins = async (ctx: ExtensionContext): Promise<void> => {
     if (pendingSessionPins.length === 0) return
+    const restoredPools = new Set<string>()
     pendingSessionPins = await applySessionPins(pendingSessionPins, {
       hasPool: poolId => service.hasProvider(poolId),
       pin: (poolId, key, accountId) => service.pinAccount(poolId, key, accountId),
@@ -887,7 +888,16 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
         `multiprovider: pinned account ${target} could not be restored for "${pin.pool}": ${errorText(error)}`,
         'warning',
       )
-    })
+    }, pin => restoredPools.add(pin.pool))
+
+    // Followers of the session's active account — pi-better-openai's usage
+    // widget, for example — re-resolve their account-scoped state from this
+    // notification. Without it a resumed session keeps showing the account it
+    // had before the switch until the follower's own next poll.
+    for (const poolId of restoredPools) {
+      const account = await announcement.getActiveAccount(poolId, ctx)
+      announcement.notifyActiveAccountChanged(poolId, ctx, account)
+    }
   }
 
   const reconcile = async (ctx: ExtensionContext): Promise<void> => {

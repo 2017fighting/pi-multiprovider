@@ -64,12 +64,15 @@ export function sessionPinsFromEntries(entries: Iterable<unknown>): SessionPin[]
  * Replays recorded decisions into the scheduler. Pools whose scheduler is not
  * registered yet are returned so the caller can retry after the next
  * reconcile; stale records — a removed or disabled account — are reported to
- * onError and dropped so they never block a later pin.
+ * onError and dropped so they never block a later pin. Decisions that reached
+ * the scheduler are reported to onApplied, which is how a resume tells
+ * followers of the session's active account that it changed.
  */
 export async function applySessionPins(
   pins: readonly SessionPin[],
   host: SessionPinHost,
   onError?: (pin: SessionPin, error: unknown) => void,
+  onApplied?: (pin: SessionPin) => void,
 ): Promise<SessionPin[]> {
   const pending: SessionPin[] = []
   for (const pin of pins) {
@@ -82,7 +85,9 @@ export async function applySessionPins(
       else await host.pin(pin.pool, pin.key, pin.accountId)
     } catch (error) {
       onError?.(pin, error)
+      continue
     }
+    onApplied?.(pin)
   }
   return pending
 }

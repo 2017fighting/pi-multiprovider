@@ -48,13 +48,24 @@ const seeded = (await store.getPool('example'))!.accounts.map(account => ({
 }))
 const personal = seeded.find(account => account.label === 'Personal')!
 
+interface AccountChangedEvent {
+  providerId: string
+  account: unknown
+  ctx: ExtensionContext
+}
+
 interface Announcement {
   getActiveAccount(providerId: string, ctx: ExtensionContext): Promise<unknown>
+  onActiveAccountChanged(
+    providerId: string,
+    callback: (event: AccountChangedEvent) => void,
+  ): () => void
 }
 
 interface ExtensionHarness {
   entries: unknown[]
   notifications: string[]
+  accountChanges: AccountChangedEvent[]
   ctx: ExtensionContext & { model?: Model<'probe-api'> }
   active(poolId: string): Promise<unknown>
   start(): Promise<void>
@@ -70,7 +81,9 @@ async function launch(initialEntries: readonly unknown[]): Promise<ExtensionHarn
   const handlers = new Map<string, ((event: unknown, ctx: unknown) => Promise<void> | void)[]>()
   const bus = new Map<string, Set<(value: unknown) => void>>()
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>()
+  const accountChanges: AccountChangedEvent[] = []
   let announcement: Announcement | undefined
+  let unsubscribeAccountChanges: (() => void) | undefined
 
   const ctx = {
     ui: {
@@ -135,8 +148,16 @@ async function launch(initialEntries: readonly unknown[]): Promise<ExtensionHarn
     },
   }
 
+  // Mirrors pi-better-openai: the service event re-fires with the same stable
+  // object, so the identity check keeps the change subscription attached once.
   bus.set(MULTIPROVIDER_SERVICE_EVENT, new Set([(value: unknown) => {
-    announcement = value as Announcement
+    const service = value as Announcement
+    if (service === announcement || typeof service?.onActiveAccountChanged !== 'function') return
+    unsubscribeAccountChanges?.()
+    announcement = service
+    unsubscribeAccountChanges = service.onActiveAccountChanged('example', event => {
+      accountChanges.push(event)
+    })
   }]))
   await multiprovider(pi as unknown as ExtensionAPI)
   if (announcement === undefined) throw new Error('extension did not announce its service')
@@ -144,6 +165,7 @@ async function launch(initialEntries: readonly unknown[]): Promise<ExtensionHarn
   return {
     entries,
     notifications,
+    accountChanges,
     ctx,
     active: poolId => announcement!.getActiveAccount(poolId, ctx),
     async start() {
@@ -181,6 +203,9 @@ describe('/switch-account survival across resume', () => {
     expect(await live.active('example')).toEqual({
       id: personal.id, label: 'Personal', authKind: 'api-key',
     })
+    expect(live.accountChanges.map(event => event.account)).toEqual([
+      { id: personal.id, label: 'Personal', authKind: 'api-key' },
+    ])
     const sessionFile = structuredClone(live.entries)
 
     // Resuming spawns a new extension runtime and scheduler; only the session
@@ -190,6 +215,12 @@ describe('/switch-account survival across resume', () => {
     expect(await resumed.active('example')).toEqual({
       id: personal.id, label: 'Personal', authKind: 'api-key',
     })
+    // The replay reaches followers of the active account, so a usage widget
+    // repaints from the resumed account without waiting for its own poll.
+    expect(resumed.accountChanges.map(event => [event.providerId, event.account])).toEqual([
+      ['example', { id: personal.id, label: 'Personal', authKind: 'api-key' }],
+    ])
+    expect(resumed.accountChanges[0]!.ctx).toBe(resumed.ctx)
     expect(resumed.notifications.filter(message => message.includes('could not be restored'))).toEqual([])
   })
 
@@ -207,6 +238,9 @@ describe('/switch-account survival across resume', () => {
     const afterClear = await launch(live.entries)
     await afterClear.start()
     expect(await afterClear.active('example')).toBeUndefined()
+    // A cleared decision replays as "automatic", so followers drop the account
+    // the session used before instead of keeping it on screen.
+    expect(afterClear.accountChanges.map(event => event.account)).toEqual([undefined])
   })
 
   it('falls back to automatic and warns when the pinned account is gone', async () => {
@@ -222,6 +256,7 @@ describe('/switch-account survival across resume', () => {
     await pinned.start()
     expect(await pinned.active('example')).toBeUndefined()
     expect(pinned.notifications.filter(message => message.includes('"Deleted" could not be restored'))).toHaveLength(1)
+    expect(pinned.accountChanges).toEqual([])
     expect(await removed.listProviderIds()).toContain('example')
   })
 })

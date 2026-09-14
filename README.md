@@ -155,7 +155,7 @@ Behavior details:
 - `/switch-account work` switches directly when the label matches exactly or by unique prefix.
 - If the pinned account was removed or disabled before the session is resumed, the session warns once and falls back to automatic selection.
 
-In-flight requests keep their leased account; only new requests observe the switch. Sibling extensions can follow switches through the [`pi-multiprovider:service` event](#session-account-service-event).
+In-flight requests keep their leased account; only new requests observe the switch. Sibling extensions can follow switches—and the account a resumed session restores—through the [`pi-multiprovider:service` event](#session-account-service-event).
 
 ## How auth merging works
 
@@ -249,7 +249,7 @@ Credential references are intentionally opaque. Account inventory, refresh, bill
 
 ### Session account service event
 
-The bundled extension announces a small in-process service on `pi-multiprovider:service` (emitted at load and on session start) so sibling extensions can follow the session's active pooled account—for example, to refresh account-scoped subscription usage views after `/switch-account`:
+The bundled extension announces a small in-process service on `pi-multiprovider:service` (emitted at load and on session start) so sibling extensions can follow the session's active pooled account—for example, to refresh account-scoped subscription usage views after `/switch-account` or a resume:
 
 ```ts
 import {
@@ -265,7 +265,7 @@ pi.events.on(MULTIPROVIDER_SERVICE_EVENT, value => {
 
 - `getActiveAccount(providerId, ctx)` — the session's effective account: the explicit `/switch-account` pin, else the scheduler's last selection while pool affinity is on. `undefined` means selection is automatic or upstream, and callers should fall back to their own credential resolution.
 - `resolveActiveAccountAuth(providerId, ctx, signal?)` — resolves (refreshing OAuth under the account-store lock when needed) the active stored account's credential as `{ accessToken, label, source? }`. Returns `undefined` for the upstream account or when nothing is active, so consumers keep their existing fallback chain.
-- `onActiveAccountChanged(providerId, callback)` — fires after `/switch-account` pins or clears, with the triggering `ctx` and the new active account.
+- `onActiveAccountChanged(providerId, callback)` — fires after `/switch-account` pins or clears, and when a session start replays a recorded pin (resume, fork, or session switch). The event carries the triggering `ctx` and the new active account—`undefined` when the replayed decision returned the session to automatic selection—so account-scoped widgets repaint with the restored account instead of waiting for their next poll. Listeners attached after a replay can rely on their own session start, which observes the already-restored pin.
 
 Credential values are never broadcast in the event payload itself; only extensions that invoke the resolver receive them, and the private `multiprovider-auth.json` store is never read directly by consumers.
 

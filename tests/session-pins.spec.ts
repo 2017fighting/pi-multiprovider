@@ -101,6 +101,19 @@ describe('session pins', () => {
     expect(service.getAffinity('example', 'session-1')).toEqual({ accountId: 'b', explicit: true })
   })
 
+  it('reports applied decisions and stays silent about pending or stale ones', async () => {
+    const service = scheduler()
+    const applied: SessionPin[] = []
+    const pending = await applySessionPins([
+      { pool: 'example', key: 'session-1', accountId: 'a', label: 'Work' },
+      { pool: 'unregistered', key: 'session-1', accountId: 'a', label: 'Work' },
+      { pool: 'example', key: 'session-1', accountId: 'gone', label: 'Removed' },
+    ], host(service), () => {}, pin => applied.push(pin))
+
+    expect(applied).toEqual([{ pool: 'example', key: 'session-1', accountId: 'a', label: 'Work' }])
+    expect(pending).toEqual([{ pool: 'unregistered', key: 'session-1', accountId: 'a', label: 'Work' }])
+  })
+
   it('reports a stale pin and drops it instead of blocking later pins', async () => {
     const service = scheduler()
     const failures: string[] = []
