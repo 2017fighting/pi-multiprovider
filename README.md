@@ -117,7 +117,7 @@ Add as many accounts as you need from the same manager. Remove credentials from 
 
 First-account bias keeps every new session on the account listed first in the pool—**Pi default (upstream)** when included, otherwise the first stored account—so you stop seeing sessions start on a backup account while the main one has plenty of usage. Integrations that want even request rotation register with `selectionBias: 'none'`, which restores the classic rotate-through-healthy-accounts behavior: accounts rotate in pool order (the order they are configured, never re-sorted by id), the rotation starts at a random account so restarts do not favor the same one, and differing per-account weights share traffic smoothly instead of being ignored.
 
-Session affinity can pin a healthy account to the current Pi session. Explicit retry exclusions always win, so a rejected account is not selected twice for the same logical request. Switch strategies, affinity, and per-account weight and priority at any time inside `/multilogin`. `/switch-account` sets the pinned account explicitly for one session without touching these settings.
+Session affinity can pin a healthy account to the current Pi session. Explicit retry exclusions always win, so a rejected account is not selected twice for the same logical request. Switch strategies, affinity, and per-account weight and priority at any time inside `/multilogin`. `/switch-account` sets the pinned account explicitly for one session without touching these settings. Pi Fabric participant agents inherit that pin through `PI_MULTIPROVIDER_SESSION_PINS` and rebind it to the child session, so spawned workers keep the operator's chosen account.
 
 ### Error tolerance and failover compaction
 

@@ -5,6 +5,7 @@
 // the scheduler owns them.
 
 export const SESSION_PIN_ENTRY_TYPE = 'pi-multiprovider:switch-account'
+export const SESSION_PIN_ENV = 'PI_MULTIPROVIDER_SESSION_PINS'
 
 /** One /switch-account decision: the account pinned to one session pool. */
 export interface SessionPin {
@@ -13,6 +14,13 @@ export interface SessionPin {
   /** Pinned account; undefined records an explicit return to automatic selection. */
   accountId?: string
   /** Account label at switch time, used only to describe restore failures. */
+  label?: string
+}
+
+/** Parent /switch-account decision rebound onto a child session. */
+export interface InheritedSessionPin {
+  pool: string
+  accountId?: string
   label?: string
 }
 
@@ -90,4 +98,49 @@ export async function applySessionPins(
     onApplied?.(pin)
   }
   return pending
+}
+
+function inheritedPinFromRecord(value: unknown): InheritedSessionPin | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const record = value as Record<string, unknown>
+  const pool = typeof record.pool === 'string' ? record.pool.trim() : ''
+  if (pool === '') return undefined
+  const accountId = typeof record.accountId === 'string' ? record.accountId.trim() : undefined
+  if (record.accountId !== undefined && (accountId === undefined || accountId === '')) return undefined
+  const label = typeof record.label === 'string' && record.label.trim() !== ''
+    ? record.label
+    : undefined
+  return {
+    pool,
+    ...(accountId === undefined ? {} : { accountId }),
+    ...(label === undefined ? {} : { label }),
+  }
+}
+
+/** Latest inherited pin per pool. Foreign, malformed, and empty records are dropped. */
+export function inheritedSessionPinsFromUnknown(value: unknown): InheritedSessionPin[] {
+  if (!Array.isArray(value)) return []
+  const latest = new Map<string, InheritedSessionPin>()
+  for (const item of value) {
+    const pin = inheritedPinFromRecord(item)
+    if (pin === undefined) continue
+    latest.set(pin.pool, pin)
+  }
+  return [...latest.values()]
+}
+
+export function inheritedSessionPinsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): InheritedSessionPin[] {
+  const raw = env[SESSION_PIN_ENV]
+  if (typeof raw !== 'string' || raw.trim() === '') return []
+  try {
+    return inheritedSessionPinsFromUnknown(JSON.parse(raw) as unknown)
+  } catch {
+    return []
+  }
+}
+
+export function serializeInheritedSessionPins(pins: readonly InheritedSessionPin[]): string {
+  return JSON.stringify(inheritedSessionPinsFromUnknown(pins))
 }

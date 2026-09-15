@@ -44,6 +44,8 @@ import {
   healVirtualTemplates,
   sessionPinsFromEntries,
   SESSION_PIN_ENTRY_TYPE,
+  inheritedSessionPinsFromEnv,
+  type InheritedSessionPin,
   virtualSchedulerId,
 } from '../src/index.ts'
 import { promptApiKeyCredential, probeSessionRuntime, selectLogin, showLoginDialog } from '../src/multilogin.ts'
@@ -566,6 +568,7 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
   const virtualIntegrations = new Map<string, ProviderRegistration<VirtualBackendRef>>()
   let currentContext: ExtensionContext | undefined
   let pendingSessionPins: SessionPin[] = []
+  let pendingInheritedSessionPins: InheritedSessionPin[] = []
 
   const effectiveIntegration = (providerId: string): AnyIntegration | undefined => {
     const managed = managedIntegrations.get(providerId)
@@ -875,20 +878,76 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
   // back to the pool strategy; account health and implicit affinity stay in
   // memory. Pools whose scheduler is not registered yet stay pending until a
   // later reconcile can apply them.
+  const affinityKeyForPool = (poolId: string, ctx: ExtensionContext): string => {
+    const virtual = virtualIntegrations.get(poolId)
+    const integration = virtual ?? effectiveIntegration(poolId)
+    if (integration === undefined) return ctx.sessionManager.getSessionId()
+    const providerId = virtual !== undefined ? ctx.model?.provider ?? poolId : poolId
+    return sessionAffinityKey(integration, ctx, ctx.model, providerId)
+  }
+
   const applyRecordedPins = async (ctx: ExtensionContext): Promise<void> => {
-    if (pendingSessionPins.length === 0) return
     const restoredPools = new Set<string>()
-    pendingSessionPins = await applySessionPins(pendingSessionPins, {
-      hasPool: poolId => service.hasProvider(poolId),
-      pin: (poolId, key, accountId) => service.pinAccount(poolId, key, accountId),
-      clear: (poolId, key) => service.clearAffinity(poolId, key),
-    }, (pin, error) => {
+    const pinHost = {
+      hasPool: (poolId: string) => service.hasProvider(poolId),
+      pin: (poolId: string, key: string, accountId: string) => service.pinAccount(poolId, key, accountId),
+      clear: (poolId: string, key: string) => service.clearAffinity(poolId, key),
+    }
+    const onRestoreError = (pin: SessionPin, error: unknown): void => {
       const target = pin.label === undefined ? pin.accountId ?? '' : `"${pin.label}"`
       ctx.ui.notify(
         `multiprovider: pinned account ${target} could not be restored for "${pin.pool}": ${errorText(error)}`,
         'warning',
       )
-    }, pin => restoredPools.add(pin.pool))
+    }
+
+    if (pendingSessionPins.length > 0) {
+      pendingSessionPins = await applySessionPins(
+        pendingSessionPins,
+        pinHost,
+        onRestoreError,
+        pin => restoredPools.add(pin.pool),
+      )
+    }
+
+    if (pendingInheritedSessionPins.length > 0) {
+      const recordedPools = new Set([
+        ...pendingSessionPins.map(pin => pin.pool),
+        ...sessionPinsFromEntries(ctx.sessionManager.getEntries()).map(pin => pin.pool),
+      ])
+      const ready: SessionPin[] = []
+      const stillPending: InheritedSessionPin[] = []
+      for (const pin of pendingInheritedSessionPins) {
+        if (recordedPools.has(pin.pool)) continue
+        if (!service.hasProvider(pin.pool)) {
+          stillPending.push(pin)
+          continue
+        }
+        ready.push({
+          pool: pin.pool,
+          key: affinityKeyForPool(pin.pool, ctx),
+          ...(pin.accountId === undefined ? {} : { accountId: pin.accountId }),
+          ...(pin.label === undefined ? {} : { label: pin.label }),
+        })
+      }
+      const leftover = await applySessionPins(ready, pinHost, onRestoreError, pin => {
+        restoredPools.add(pin.pool)
+        pi.appendEntry(SESSION_PIN_ENTRY_TYPE, {
+          pool: pin.pool,
+          key: pin.key,
+          ...(pin.accountId === undefined ? {} : { accountId: pin.accountId }),
+          ...(pin.label === undefined ? {} : { label: pin.label }),
+        })
+      })
+      pendingInheritedSessionPins = [
+        ...stillPending,
+        ...leftover.map(pin => ({
+          pool: pin.pool,
+          ...(pin.accountId === undefined ? {} : { accountId: pin.accountId }),
+          ...(pin.label === undefined ? {} : { label: pin.label }),
+        })),
+      ]
+    }
 
     // Followers of the session's active account — pi-better-openai's usage
     // widget, for example — re-resolve their account-scoped state from this
@@ -925,6 +984,9 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
   pi.on('session_start', async (_event, ctx) => {
     currentContext = ctx
     pendingSessionPins = sessionPinsFromEntries(ctx.sessionManager.getEntries())
+    const recordedPools = new Set(pendingSessionPins.map(pin => pin.pool))
+    pendingInheritedSessionPins = inheritedSessionPinsFromEnv(process.env)
+      .filter((pin: InheritedSessionPin) => !recordedPools.has(pin.pool))
     await reconcile(ctx)
     announceService()
   })
@@ -944,6 +1006,7 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
     virtualIntegrations.clear()
     virtualConfigs.clear()
     pendingSessionPins = []
+    pendingInheritedSessionPins = []
     currentContext = undefined
   })
 

@@ -259,4 +259,48 @@ describe('/switch-account survival across resume', () => {
     expect(pinned.accountChanges).toEqual([])
     expect(await removed.listProviderIds()).toContain('example')
   })
+
+  it('rebinds PI_MULTIPROVIDER_SESSION_PINS onto the child session when no journal exists', async () => {
+    const previous = process.env.PI_MULTIPROVIDER_SESSION_PINS
+    process.env.PI_MULTIPROVIDER_SESSION_PINS = JSON.stringify([
+      { pool: 'example', accountId: personal.id, label: 'Personal' },
+    ])
+    try {
+      const child = await launch([])
+      child.ctx.sessionManager.getSessionId = () => 'child-session'
+      await child.start()
+      expect(await child.active('example')).toEqual({
+        id: personal.id, label: 'Personal', authKind: 'api-key',
+      })
+      expect(journal(child.entries)).toEqual([
+        { pool: 'example', key: 'child-session', accountId: personal.id, label: 'Personal' },
+      ])
+    } finally {
+      if (previous === undefined) delete process.env.PI_MULTIPROVIDER_SESSION_PINS
+      else process.env.PI_MULTIPROVIDER_SESSION_PINS = previous
+    }
+  })
+
+  it('lets the child session journal win over inherited env pins', async () => {
+    const previous = process.env.PI_MULTIPROVIDER_SESSION_PINS
+    process.env.PI_MULTIPROVIDER_SESSION_PINS = JSON.stringify([
+      { pool: 'example', accountId: personal.id, label: 'Personal' },
+    ])
+    try {
+      const child = await launch([{
+        type: 'custom',
+        customType: SESSION_PIN_ENTRY_TYPE,
+        data: { pool: 'example', key: 'child-session' },
+        id: 'entry-1',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+      }])
+      await child.start()
+      expect(await child.active('example')).toBeUndefined()
+      expect(journal(child.entries)).toEqual([{ pool: 'example', key: 'child-session' }])
+    } finally {
+      if (previous === undefined) delete process.env.PI_MULTIPROVIDER_SESSION_PINS
+      else process.env.PI_MULTIPROVIDER_SESSION_PINS = previous
+    }
+  })
 })

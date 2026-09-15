@@ -23,8 +23,13 @@ export {
 export { registerMultiProvider } from './register.ts'
 export {
   applySessionPins,
+  inheritedSessionPinsFromEnv,
+  inheritedSessionPinsFromUnknown,
+  serializeInheritedSessionPins,
   SESSION_PIN_ENTRY_TYPE,
+  SESSION_PIN_ENV,
   sessionPinsFromEntries,
+  type InheritedSessionPin,
   type SessionPin,
   type SessionPinHost,
 } from './session-pins.ts'

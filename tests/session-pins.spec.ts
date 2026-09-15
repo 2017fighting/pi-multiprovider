@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   applySessionPins,
   createVirtualIntegrations,
+  inheritedSessionPinsFromEnv,
+  inheritedSessionPinsFromUnknown,
   MultiProviderService,
   SESSION_PIN_ENTRY_TYPE,
+  SESSION_PIN_ENV,
+  serializeInheritedSessionPins,
   sessionPinsFromEntries,
   virtualBackendAccountId,
   virtualSchedulerId,
@@ -186,5 +190,17 @@ describe('session pins', () => {
     )
     expect(pending).toEqual([])
     expect(service.getAffinity('example', 'session-1')).toBeUndefined()
+  })
+
+  it('parses inherited env pins without requiring the parent affinity key', () => {
+    expect(inheritedSessionPinsFromUnknown([
+      { pool: 'example', key: 'parent-session', accountId: 'a', label: 'Work' },
+      { pool: 'example', accountId: 'b', label: 'Personal' },
+      { pool: '' },
+    ])).toEqual([{ pool: 'example', accountId: 'b', label: 'Personal' }])
+    expect(inheritedSessionPinsFromEnv({
+      [SESSION_PIN_ENV]: serializeInheritedSessionPins([{ pool: 'example', accountId: 'a' }]),
+    })).toEqual([{ pool: 'example', accountId: 'a' }])
+    expect(inheritedSessionPinsFromEnv({ [SESSION_PIN_ENV]: '{' })).toEqual([])
   })
 })
