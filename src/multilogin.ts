@@ -8,10 +8,12 @@ import type {
   ProviderAuthInteraction,
 } from '@earendil-works/pi-ai'
 import {
+  ExtensionSelectorComponent,
   LoginDialogComponent,
   OAuthSelectorComponent,
   type ExtensionContext,
 } from '@earendil-works/pi-coding-agent'
+import { Container, type Focusable, type TUI } from '@earendil-works/pi-tui'
 
 export interface LoginSelection {
   provider: Provider<Api>
@@ -180,24 +182,146 @@ async function withPromptSignal<T>(
   }
 }
 
+export class LoginDialogHostComponent extends Container implements Focusable {
+  readonly dialog: LoginDialogComponent
+  private activeView: Container & { handleInput?(data: string): void; focused?: boolean; dispose?(): void }
+  private _focused = false
+
+  get focused(): boolean {
+    return this._focused
+  }
+
+  set focused(value: boolean) {
+    this._focused = value
+    if ('focused' in this.activeView && typeof this.activeView.focused === 'boolean') {
+      this.activeView.focused = value
+    }
+  }
+
+  constructor(
+    private readonly tui: TUI,
+    providerId: string,
+    onCancel: () => void,
+    providerName?: string,
+    titleOverride?: string,
+  ) {
+    super()
+    this.dialog = new LoginDialogComponent(
+      tui,
+      providerId,
+      onCancel,
+      providerName,
+      titleOverride,
+    )
+    this.activeView = this.dialog
+    this.addChild(this.dialog)
+  }
+
+  showSelect(
+    title: string,
+    options: readonly { id: string; label: string }[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted || this.dialog.signal.aborted) {
+        reject(new Error('Login cancelled'))
+        return
+      }
+
+      let onPromptAbort: (() => void) | undefined
+      let onDialogAbort: (() => void) | undefined
+      let selector: ExtensionSelectorComponent | undefined
+      let settled = false
+
+      const restoreDialog = () => {
+        if (settled) return
+        settled = true
+        if (onPromptAbort !== undefined && signal !== undefined) {
+          signal.removeEventListener('abort', onPromptAbort)
+        }
+        if (onDialogAbort !== undefined) {
+          this.dialog.signal.removeEventListener('abort', onDialogAbort)
+        }
+        try {
+          selector?.dispose()
+        } catch {
+          // ignore selector disposal failure
+        }
+        this.clear()
+        this.activeView = this.dialog
+        this.addChild(this.dialog)
+        this.dialog.focused = this._focused
+        this.invalidate()
+        this.tui.requestRender()
+      }
+
+      onPromptAbort = () => {
+        restoreDialog()
+        reject(new Error('Login cancelled'))
+      }
+      onDialogAbort = () => {
+        restoreDialog()
+        reject(new Error('Login cancelled'))
+      }
+
+      if (signal !== undefined) {
+        signal.addEventListener('abort', onPromptAbort, { once: true })
+      }
+      this.dialog.signal.addEventListener('abort', onDialogAbort, { once: true })
+
+      const labels = options.map(option => option.label)
+      selector = new ExtensionSelectorComponent(
+        title,
+        labels,
+        selectedLabel => {
+          restoreDialog()
+          const matched = options.find(option => option.label === selectedLabel)
+          if (matched === undefined) {
+            reject(new Error('Login cancelled'))
+          } else {
+            resolve(matched.id)
+          }
+        },
+        () => {
+          restoreDialog()
+          reject(new Error('Login cancelled'))
+        },
+        { tui: this.tui },
+      )
+
+      this.clear()
+      this.activeView = selector
+      this.addChild(selector)
+      this.invalidate()
+      this.tui.requestRender()
+    })
+  }
+
+  handleInput(data: string): void {
+    if (typeof this.activeView.handleInput === 'function') {
+      this.activeView.handleInput(data)
+    }
+    this.tui.requestRender()
+  }
+
+  dispose(): void {
+    if (typeof this.activeView.dispose === 'function') {
+      this.activeView.dispose()
+    }
+  }
+}
+
 async function promptDialog(
-  ctx: ExtensionContext,
-  dialog: LoginDialogComponent,
+  host: LoginDialogHostComponent,
   prompt: AuthPrompt,
 ): Promise<string> {
   let response: Promise<string>
   if (prompt.type === 'select') {
-    response = (async () => {
-      const labels = prompt.options.map(option => option.label)
-      const selected = await ctx.ui.select(prompt.message, labels)
-      const id = prompt.options.find(option => option.label === selected)?.id
-      if (id === undefined) throw new Error('Login cancelled')
-      return id
-    })()
+    response = host.showSelect(prompt.message, prompt.options, prompt.signal)
   } else if (prompt.type === 'manual_code') {
-    response = dialog.showManualInput(prompt.message)
+    response = host.dialog.showManualInput(prompt.message)
   } else {
-    response = dialog.showPrompt(prompt.message, prompt.placeholder)
+    response = host.dialog.showPrompt(prompt.message, prompt.placeholder)
   }
   return withPromptSignal(response, prompt.signal)
 }
@@ -241,7 +365,7 @@ export async function showLoginDialog(
       finished = true
       done(result)
     }
-    const dialog = new LoginDialogComponent(
+    const host = new LoginDialogHostComponent(
       tui,
       selection.provider.id,
       () => finish(undefined),
@@ -249,9 +373,9 @@ export async function showLoginDialog(
       `Add ${selection.provider.name} account`,
     )
     const interaction: ProviderAuthInteraction = {
-      signal: dialog.signal,
-      prompt: prompt => promptDialog(ctx, dialog, prompt),
-      notify: event => notifyDialog(dialog, event),
+      signal: host.dialog.signal,
+      prompt: prompt => promptDialog(host, prompt),
+      notify: event => notifyDialog(host.dialog, event),
     }
 
     queueMicrotask(() => {
@@ -263,6 +387,6 @@ export async function showLoginDialog(
         })
     })
 
-    return dialog
+    return host
   })
 }
