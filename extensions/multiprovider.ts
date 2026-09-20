@@ -1,4 +1,5 @@
-import type { Api, AuthType, Context, Credential, Model, Provider } from '@earendil-works/pi-ai'
+import type { Api, AuthType, Credential, Model, Provider } from '@earendil-works/pi-ai'
+import { normalizeContext } from '@earendil-works/pi-ai'
 import {
   DynamicBorder,
   type ExtensionAPI,
@@ -600,7 +601,7 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
       ?? ctx.modelRegistry.getProvider(providerId) as Provider<Api> | undefined
     if (provider === undefined) return fallback
     try {
-      return customAffinityKey({ provider, model, context: { messages: [] } }) ?? fallback
+      return customAffinityKey({ provider, model, context: normalizeContext({ messages: [] }) }) ?? fallback
     } catch {
       return fallback
     }

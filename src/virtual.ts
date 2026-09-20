@@ -4,13 +4,13 @@ import {
   type ApiStreamOptions,
   type AssistantMessageEvent,
   type AssistantMessageEventStream,
-  type Context,
   type Model,
   type Provider,
   type ProviderHeaders,
   type ProviderResponse,
   type SimpleStreamOptions,
   type StreamOptions,
+  type TranscriptContext,
 } from '@earendil-works/pi-ai'
 import {
   failureFrom,
@@ -146,7 +146,7 @@ function virtualStream<TApi extends Api>(
   dependencies: VirtualProviderDependencies,
   kind: StreamKind,
   model: Model<TApi>,
-  context: Context,
+  context: TranscriptContext,
   options?: RequestOptions,
 ): AssistantMessageEventStream {
   const { config, service } = dependencies
@@ -456,14 +456,14 @@ export function createVirtualProvider(dependencies: VirtualProviderDependencies)
     getModels: () => config.models.map(virtualModel),
     stream<T extends Api>(
       model: Model<T>,
-      context: Context,
+      context: TranscriptContext,
       streamOptions?: ApiStreamOptions<T>,
     ): AssistantMessageEventStream {
       return virtualStream(dependencies, 'stream', model, context, streamOptions as RequestOptions | undefined)
     },
     streamSimple(
       model: Model<Api>,
-      context: Context,
+      context: TranscriptContext,
       streamOptions?: SimpleStreamOptions,
     ): AssistantMessageEventStream {
       return virtualStream(dependencies, 'streamSimple', model, context, streamOptions as RequestOptions | undefined)

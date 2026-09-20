@@ -1,16 +1,17 @@
 import {
   createAssistantMessageEventStream,
   createProvider,
+  normalizeContext,
   type Api,
   type AssistantMessage,
   type AssistantMessageEvent,
   type AssistantMessageEventStream,
   type AuthContext,
-  type Context,
   type Model,
   type Provider,
   type SimpleStreamOptions,
   type StopReason,
+  type TranscriptContext,
 } from '@earendil-works/pi-ai'
 import { describe, expect, it } from 'vitest'
 import {
@@ -61,7 +62,7 @@ const config: VirtualProviderConfig = {
   }],
 }
 
-const context: Context = { messages: [] }
+const context: TranscriptContext = normalizeContext({ messages: [] })
 
 const authContext: AuthContext = {
   async env() {
@@ -125,7 +126,7 @@ function errorStream(errorMessage: string): AssistantMessageEventStream {
 
 type Handler = (
   model: Model<'test-api'>,
-  context: Context,
+  context: TranscriptContext,
   options?: SimpleStreamOptions,
 ) => AssistantMessageEventStream
 

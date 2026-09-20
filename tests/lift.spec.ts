@@ -4,11 +4,11 @@ import {
   createProvider,
   type AssistantMessage,
   type AssistantMessageEventStream,
-  type Context,
   type Model,
   type ProviderResponse,
   type SimpleStreamOptions,
   type StopReason,
+  type TranscriptContext,
 } from '@earendil-works/pi-ai'
 import { describe, expect, it } from 'vitest'
 import {
@@ -75,7 +75,7 @@ function finishWithText(stream: AssistantMessageEventStream, text: string): void
 
 type Handler = (
   requestModel: Model<'test-api'>,
-  context: Context,
+  context: TranscriptContext,
   options?: SimpleStreamOptions,
 ) => AssistantMessageEventStream
 

@@ -1,3 +1,4 @@
+import { normalizeContext } from '@earendil-works/pi-ai'
 import type { Api, Provider, ProviderHeaders } from '@earendil-works/pi-ai'
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { PI_UPSTREAM_ACCOUNT_ID } from './managed.ts'
@@ -96,7 +97,7 @@ export function createServiceAnnouncement(deps: AnnouncementDependencies): Servi
         const resolution = await integration.resolveAuth(account, effectiveSignal, {
           provider: base,
           model,
-          context: { messages: [] },
+          context: normalizeContext({ messages: [] }),
           requestOptions: {},
           signal: effectiveSignal,
         })

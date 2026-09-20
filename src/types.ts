@@ -2,11 +2,11 @@ import type {
   Api,
   AssistantMessage,
   AuthResult,
-  Context,
   Model,
   Provider,
   ProviderAuth,
   StreamOptions,
+  TranscriptContext,
 } from '@earendil-works/pi-ai'
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent'
 
@@ -230,7 +230,7 @@ export interface SchedulerOptions {
 export interface AccountRequestContext<TApi extends Api = Api> {
   provider: Provider<TApi>
   model: Model<TApi>
-  context: Context
+  context: TranscriptContext
   requestOptions: Readonly<StreamOptions & Record<string, unknown>>
   signal: AbortSignal
 }
@@ -257,7 +257,7 @@ export interface LiftProviderOptions<TApi extends Api = Api, TCredentialRef = un
   affinityKey?: (input: {
     provider: Provider<TApi>
     model: Model<TApi>
-    context: Context
+    context: TranscriptContext
   }) => string | undefined
   disableProviderRetries?: boolean
   maxAccountAttempts?: number

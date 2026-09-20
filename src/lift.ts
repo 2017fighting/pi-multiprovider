@@ -5,13 +5,13 @@ import {
   type AssistantMessageEvent,
   type AssistantMessageEventStream,
   type AuthResult,
-  type Context,
   type Model,
   type Provider,
   type ProviderHeaders,
   type ProviderResponse,
   type SimpleStreamOptions,
   type StreamOptions,
+  type TranscriptContext,
 } from '@earendil-works/pi-ai'
 import { MultiProviderService } from './service.ts'
 import type {
@@ -99,7 +99,7 @@ function callProvider<TApi extends Api>(
   provider: Provider<TApi>,
   kind: StreamKind,
   model: Model<TApi>,
-  context: Context,
+  context: TranscriptContext,
   options: RequestOptions,
 ): AssistantMessageEventStream {
   if (kind === 'streamSimple') {
@@ -121,7 +121,7 @@ function liftedStream<TApi extends Api, TCredentialRef>(
   liftOptions: LiftProviderOptions<TApi, TCredentialRef>,
   kind: StreamKind,
   model: Model<TApi>,
-  context: Context,
+  context: TranscriptContext,
   options?: RequestOptions,
 ): AssistantMessageEventStream {
   return lazyStream(model, async () => {
@@ -359,7 +359,7 @@ export function liftProvider<TApi extends Api, TCredentialRef = unknown>(
       : { filterModels: (models, credential) => provider.filterModels!(models, credential) }),
     stream<T extends TApi>(
       model: Model<T>,
-      context: Context,
+      context: TranscriptContext,
       streamOptions?: ApiStreamOptions<T>,
     ): AssistantMessageEventStream {
       return liftedStream(
@@ -374,7 +374,7 @@ export function liftProvider<TApi extends Api, TCredentialRef = unknown>(
     },
     streamSimple(
       model: Model<TApi>,
-      context: Context,
+      context: TranscriptContext,
       streamOptions?: SimpleStreamOptions,
     ): AssistantMessageEventStream {
       return liftedStream(
