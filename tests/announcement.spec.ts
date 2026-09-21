@@ -218,3 +218,24 @@ describe('service announcement', () => {
     expect(scheduler).toBeDefined()
   })
 })
+
+describe('pool account recency', () => {
+  it('reports the most recently leased account', async () => {
+    const { scheduler, announcement, ctx } = makeHarness({ selectionBias: 'none' })
+    // No selection yet: nothing to report.
+    expect(await announcement.getMostRecentlyUsedAccount?.('example')).toBeUndefined()
+
+    const lease = await scheduler.acquire({ providerId: 'example', affinityKey: 'session-1' })
+    lease.release({ status: 'success' })
+    const used = await announcement.getMostRecentlyUsedAccount?.('example')
+    expect(used).toBeDefined()
+    expect(accounts.map(account => account.id)).toContain(used!.id)
+
+    // Snapshot exposes the timestamp used to pick it.
+    const snapshot = await announcement.getPoolSnapshot?.('example')
+    expect(snapshot?.accounts.some(account => account.lastSelectedAt !== undefined)).toBe(true)
+    expect(await announcement.getMostRecentlyUsedAccount?.('missing')).toBeUndefined()
+    // Suppress an unused-variable lint without weakening the assertion.
+    expect(ctx).toBeDefined()
+  })
+})

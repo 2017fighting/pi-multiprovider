@@ -239,8 +239,24 @@ export function createServiceAnnouncement(deps: AnnouncementDependencies): Servi
           label: account.label,
           status: account.status,
           ...(account.cooldownUntil === undefined ? {} : { cooldownUntil: account.cooldownUntil }),
+          ...(account.lastSelectedAt === undefined ? {} : { lastSelectedAt: account.lastSelectedAt }),
         })),
       }
+    },
+    async getMostRecentlyUsedAccount(providerId) {
+      // The account the pool most recently leased. For a nested setup
+      // (virtual provider -> pooled provider) this is the real credential that
+      // served the request, which affinity alone does not reveal when the
+      // upstream account is included in the pool.
+      const snapshot = await deps.scheduler.snapshot()
+      const pool = snapshot.providers.find(provider => provider.id === providerId)
+      if (pool === undefined) return undefined
+      const candidates = pool.accounts.filter(account => account.lastSelectedAt !== undefined)
+      if (candidates.length === 0) return undefined
+      const latest = candidates.reduce((best, account) =>
+        (account.lastSelectedAt ?? 0) > (best.lastSelectedAt ?? 0) ? account : best,
+      )
+      return { id: latest.id, label: latest.label, authKind: latest.authKind }
     },
     notifyActiveAccountChanged(providerId, ctx, account) {
       const callbacks = listeners.get(providerId)

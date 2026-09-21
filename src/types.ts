@@ -322,6 +322,13 @@ export interface MultiProviderServiceAnnouncement {
    * account is not being used even though its subscription still has quota.
    */
   getPoolSnapshot?(providerId: string): Promise<AnnouncedPoolSnapshot | undefined>
+  /**
+   * The pool account most recently leased, i.e. the credential that served the
+   * latest request. Differs from `getActiveAccount` when the pool includes the
+   * upstream credential, because affinity can point at an account that upstream
+   * requests bypass.
+   */
+  getMostRecentlyUsedAccount?(providerId: string): Promise<ActiveAccount | undefined>
 }
 
 /** Public, credential-free view of one pool's account health. */
@@ -331,5 +338,7 @@ export interface AnnouncedPoolSnapshot {
     label: string
     status: PublicAccountStatus
     cooldownUntil?: number
+    /** Epoch ms of the last time this account was leased. */
+    lastSelectedAt?: number
   }>
 }
