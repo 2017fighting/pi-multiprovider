@@ -11,7 +11,6 @@ import type {
   MultiProviderServiceAnnouncement,
   MultiProviderServiceContext,
 } from './types.ts'
-
 export interface AnnouncementDependencies {
   scheduler: MultiProviderService
   getIntegration(providerId: string): MultiProviderIntegration<Api, unknown> | undefined
@@ -24,6 +23,45 @@ export interface AnnouncementDependencies {
     ctx: MultiProviderServiceContext,
     providerId: string,
   ): string
+  /**
+   * Resolve a virtual provider's backing pool. A virtual model maps one model id
+   * onto several (providerId, modelId) backends, scheduled under the composite
+   * id `${virtualProviderId}::${modelId}`. When it returns a registration, the
+   * announcement resolves the active backend through the same affinity machinery
+   * as a normal pool, which is what lets a sibling extension show "dsv4 → kimi".
+   */
+  getVirtualIntegration?(
+    virtualProviderId: string,
+    modelId: string | undefined,
+  ): VirtualAnnouncementTarget | undefined
+}
+
+/**
+ * A virtual pool plus enough information to translate its scheduler accounts
+ * back into the real backing provider identity for consumers. Only the account
+ * inventory is needed: virtual backends are not credential-resolvable through
+ * the announcement (each backend resolves its own ambient auth).
+ */
+export interface VirtualAnnouncementTarget {
+  integration: VirtualAccountSource
+  /** Scheduler id used for the virtual pool, i.e. `${virtualProviderId}::${modelId}`. */
+  schedulerId: string
+}
+
+/**
+ * The slice of an integration the announcement needs for a virtual pool. Kept
+ * structurally minimal and synchronous-or-async tolerant so both managed
+ * integrations and `ProviderRegistration`s satisfy it.
+ */
+export interface VirtualAccountSource {
+  accounts():
+    | ReadonlyArray<{ id: string; label: string; authKind: ActiveAccount['authKind'] }>
+    | Promise<ReadonlyArray<{ id: string; label: string; authKind: ActiveAccount['authKind'] }>>
+  affinityKey?: (input: {
+    provider: unknown
+    model: unknown
+    context: { messages: unknown[] }
+  }) => string | undefined
 }
 
 // The public announcement plus the notify hook the bundled extension uses after
@@ -58,8 +96,32 @@ export function createServiceAnnouncement(deps: AnnouncementDependencies): Servi
     providerId: string,
     ctx: MultiProviderServiceContext,
   ): Promise<ActiveAccount | undefined> => {
+    // Real pooled provider. `getIntegration` is only consulted for real ids; a
+    // virtual id yields undefined here and is handled by the virtual branch.
     const integration = deps.getIntegration(providerId)
-    if (integration === undefined) return undefined
+    if (integration === undefined) return resolveVirtualActiveAccount(providerId, ctx)
+    return activeAccountFor(providerId, integration, ctx)
+  }
+
+  // Resolve the active account of a virtual pool. The scheduler id is the
+  // composite `${virtualProviderId}::${modelId}`; the returned account id is the
+  // backend account id that virtual.ts synthesizes.
+  const resolveVirtualActiveAccount = async (
+    virtualProviderId: string,
+    ctx: MultiProviderServiceContext,
+  ): Promise<ActiveAccount | undefined> => {
+    if (deps.getVirtualIntegration === undefined) return undefined
+    const modelId = (ctx.model as { id?: string } | undefined)?.id
+    const target = deps.getVirtualIntegration(virtualProviderId, modelId)
+    if (target === undefined) return undefined
+    return activeAccountForVirtual(target, ctx)
+  }
+
+  const activeAccountFor = async (
+    providerId: string,
+    integration: MultiProviderIntegration<Api, unknown>,
+    ctx: MultiProviderServiceContext,
+  ): Promise<ActiveAccount | undefined> => {
     let affinity: boolean
     try {
       affinity = deps.scheduler.getPoolPreference(providerId).affinity
@@ -76,6 +138,45 @@ export function createServiceAnnouncement(deps: AnnouncementDependencies): Servi
     )
     if (account === undefined) return undefined
     return { id: account.id, label: account.label, authKind: account.authKind }
+  }
+
+  const activeAccountForVirtual = async (
+    target: VirtualAnnouncementTarget,
+    ctx: MultiProviderServiceContext,
+  ): Promise<ActiveAccount | undefined> => {
+    let affinity: boolean
+    try {
+      affinity = deps.scheduler.getPoolPreference(target.schedulerId).affinity
+    } catch {
+      return undefined
+    }
+    const pin = deps.scheduler.getAffinity(
+      target.schedulerId,
+      sessionAffinityKeyFor(target, ctx),
+    )
+    if (pin === undefined || (!pin.explicit && !affinity)) return undefined
+    const accounts = await target.integration.accounts()
+    const account = accounts.find(candidate => candidate.id === pin.accountId)
+    if (account === undefined) return undefined
+    return { id: account.id, label: account.label, authKind: account.authKind }
+  }
+
+  // Virtual pools derive their affinity key from the session id, matching
+  // virtual.ts's own getAffinityKey wiring.
+  const sessionAffinityKeyFor = (
+    target: VirtualAnnouncementTarget,
+    ctx: MultiProviderServiceContext,
+  ): string => {
+    const custom = target.integration.affinityKey
+    if (custom === undefined) return ctx.sessionManager.getSessionId()
+    const provider = ctx.modelRegistry.getProvider(target.schedulerId)
+    const model = ctx.model
+    if (provider === undefined || model === undefined) return ctx.sessionManager.getSessionId()
+    try {
+      return custom({ provider, model, context: { messages: [] } }) ?? ctx.sessionManager.getSessionId()
+    } catch {
+      return ctx.sessionManager.getSessionId()
+    }
   }
 
   return {
@@ -124,6 +225,21 @@ export function createServiceAnnouncement(deps: AnnouncementDependencies): Servi
         if (current === undefined) return
         current.delete(callback)
         if (current.size === 0) listeners.delete(providerId)
+      }
+    },
+    async getPoolSnapshot(providerId) {
+      // Route virtual composite ids (`dsv4::model`) through unchanged; the
+      // scheduler stores virtual pools under exactly that id.
+      const snapshot = await deps.scheduler.snapshot()
+      const pool = snapshot.providers.find(provider => provider.id === providerId)
+      if (pool === undefined) return undefined
+      return {
+        accounts: pool.accounts.map(account => ({
+          id: account.id,
+          label: account.label,
+          status: account.status,
+          ...(account.cooldownUntil === undefined ? {} : { cooldownUntil: account.cooldownUntil }),
+        })),
       }
     },
     notifyActiveAccountChanged(providerId, ctx, account) {

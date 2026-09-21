@@ -314,4 +314,22 @@ export interface MultiProviderServiceAnnouncement {
     providerId: string,
     callback: (event: ActiveAccountChangedEvent) => void,
   ): () => void
+  /**
+   * Health snapshot for one pool's accounts, including local cooldown state.
+   * `providerId` is a real provider id, or the composite
+   * `${virtualProviderId}::${modelId}` for a virtual pool. Returns undefined when
+   * the pool is unknown. Added so sibling extensions can show why a pooled
+   * account is not being used even though its subscription still has quota.
+   */
+  getPoolSnapshot?(providerId: string): Promise<AnnouncedPoolSnapshot | undefined>
+}
+
+/** Public, credential-free view of one pool's account health. */
+export interface AnnouncedPoolSnapshot {
+  accounts: Array<{
+    id: string
+    label: string
+    status: PublicAccountStatus
+    cooldownUntil?: number
+  }>
 }

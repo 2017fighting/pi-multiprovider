@@ -618,6 +618,20 @@ export default async function multiprovider(pi: ExtensionAPI): Promise<void> {
       ?? ctx.modelRegistry.getProvider(providerId) as Provider<Api> | undefined,
     affinityKeyFor: (integration, ctx, providerId) =>
       sessionAffinityKey(integration, ctx, ctx.model, providerId),
+    // Virtual pools are not "integrations" for real provider ids, so resolve
+    // them explicitly: a sibling asking for the active account of virtual
+    // provider "dsv4" gets the backend currently serving this session.
+    getVirtualIntegration: (virtualProviderId, modelId) => {
+      if (modelId === undefined) {
+        // Without a model id there is no way to disambiguate; a virtual provider
+        // schedules one pool per virtual model.
+        return undefined
+      }
+      const schedulerId = virtualSchedulerId(virtualProviderId, modelId)
+      const integration = virtualIntegrations.get(schedulerId)
+      if (integration === undefined) return undefined
+      return { integration, schedulerId }
+    },
   })
 
   const announceService = (): void => {

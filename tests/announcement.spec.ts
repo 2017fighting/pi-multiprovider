@@ -157,4 +157,64 @@ describe('service announcement', () => {
     expect(await announcement.getActiveAccount('missing', ctx)).toBeUndefined()
     expect(await announcement.resolveActiveAccountAuth('missing', ctx)).toBeUndefined()
   })
+
+  it('resolves the active backend of a virtual pool', async () => {
+    const scheduler = new MultiProviderService({ randomId: () => 'lease-1', randomInt: () => 1 })
+    const backends: ProviderAccount<string>[] = [
+      { id: 'kimi-coding::k3', label: 'kimi-coding · k3', authKind: 'oauth', credentialRef: 'r1' },
+      { id: 'deepseek::deepseek-v4-pro', label: 'deepseek · v4-pro', authKind: 'oauth', credentialRef: 'r2' },
+    ]
+    const virtualIntegration = {
+      id: 'dsv4::k3',
+      label: 'dsv4',
+      accounts: () => backends,
+    }
+    scheduler.registerProvider({
+      id: 'dsv4::k3',
+      label: 'dsv4',
+      accounts: () => backends,
+      selectionBias: 'none',
+    })
+    const model = { id: 'k3', provider: 'dsv4' } as unknown as Model<Api>
+    const ctx = {
+      model,
+      sessionManager: { getSessionId: () => 'session-1' },
+      modelRegistry: { getProvider: () => undefined },
+    } as unknown as MultiProviderServiceContext
+    const announcement = createServiceAnnouncement({
+      scheduler,
+      getIntegration: () => undefined,
+      getBaseProvider: () => undefined,
+      affinityKeyFor: () => 'session-1',
+      getVirtualIntegration: (virtualProviderId, modelId) => {
+        if (virtualProviderId !== 'dsv4' || modelId !== 'k3') return undefined
+        return { integration: virtualIntegration, schedulerId: 'dsv4::k3' }
+      },
+    })
+
+    // A virtual provider has no integration under its own id, so the plain
+    // lookup fails; the virtual resolver is what makes this work.
+    const lease = await scheduler.acquire({ providerId: 'dsv4::k3', affinityKey: 'session-1' })
+    lease.release({ status: 'success' })
+    const active = await announcement.getActiveAccount('dsv4', ctx)
+    // The announcement must report the backend the scheduler actually selected,
+    // not merely the first backend in the pool.
+    const selected = scheduler.getAffinity('dsv4::k3', 'session-1')
+    expect(selected).toBeDefined()
+    expect(active?.id).toBe(selected!.accountId)
+    expect(backends.map(backend => backend.id)).toContain(active!.id)
+    // And it is a real backend identity, not the virtual provider id.
+    expect(active!.id).not.toBe('dsv4')
+  })
+
+  it('exposes pool account health with cooldowns via getPoolSnapshot', async () => {
+    const { scheduler, announcement } = makeHarness({ affinity: false })
+    const snapshot = await announcement.getPoolSnapshot?.('example')
+    expect(snapshot).toBeDefined()
+    expect(snapshot!.accounts.map(account => account.id)).toEqual(accounts.map(account => account.id))
+    expect(snapshot!.accounts.every(account => ['ready', 'cooldown', 'disabled'].includes(account.status))).toBe(true)
+    expect(await announcement.getPoolSnapshot?.('missing')).toBeUndefined()
+    // Silence an unused-variable lint without weakening the assertion.
+    expect(scheduler).toBeDefined()
+  })
 })

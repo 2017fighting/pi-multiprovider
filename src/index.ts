@@ -19,6 +19,7 @@ export {
   createServiceAnnouncement,
   type AnnouncementDependencies,
   type ServiceAnnouncementHandle,
+  type VirtualAnnouncementTarget,
 } from './announcement.ts'
 export { registerMultiProvider } from './register.ts'
 export {
