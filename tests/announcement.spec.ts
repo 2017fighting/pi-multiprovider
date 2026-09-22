@@ -2,6 +2,7 @@ import type { Api, Model, Provider } from '@earendil-works/pi-ai'
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it } from 'vitest'
 import { createServiceAnnouncement } from '../src/announcement.ts'
+import type { ServiceAnnouncementHandle } from '../src/announcement.ts'
 import {
   MultiProviderService,
   PI_UPSTREAM_ACCOUNT_ID,
@@ -10,6 +11,21 @@ import {
   type MultiProviderServiceContext,
   type ProviderAccount,
 } from '../src/index.ts'
+
+/**
+ * `resolveAccountAuth` is optional on the announcement interface so consumers
+ * stay compatible with older handles; the handle built here always has it.
+ */
+function resolveNamed(
+  announcement: ServiceAnnouncementHandle,
+  providerId: string,
+  accountId: string,
+  ctx: MultiProviderServiceContext,
+): Promise<{ accessToken: string; label: string; source?: string } | undefined> {
+  const resolve = announcement.resolveAccountAuth
+  if (resolve === undefined) throw new Error('resolveAccountAuth missing from the handle')
+  return resolve.call(announcement, providerId, accountId, ctx)
+}
 
 const accounts: ProviderAccount<string>[] = [
   {
@@ -156,6 +172,31 @@ describe('service announcement', () => {
     const { announcement, ctx } = makeHarness({})
     expect(await announcement.getActiveAccount('missing', ctx)).toBeUndefined()
     expect(await announcement.resolveActiveAccountAuth('missing', ctx)).toBeUndefined()
+    expect(await resolveNamed(announcement, 'missing', 'a', ctx)).toBeUndefined()
+  })
+
+  it('resolves a named account credential without needing a pin', async () => {
+    // A usage dashboard renders every account in the pool, not just the one
+    // serving the session, so account-scoped resolution must not depend on
+    // affinity, a pin, or which account happens to be active.
+    const { announcement, ctx } = makeHarness({ resolve: { auth: { apiKey: 'token-b' } } })
+    expect(await announcement.getActiveAccount('example', ctx)).toBeUndefined()
+    expect(await resolveNamed(announcement, 'example', 'b', ctx)).toEqual({
+      accessToken: 'token-b',
+      label: 'Personal',
+    })
+  })
+
+  it('refuses to resolve the upstream account or an unknown account id', async () => {
+    const { announcement, ctx } = makeHarness({})
+    // `pi:default` belongs to Pi's own store, not to multiprovider.
+    expect(await resolveNamed(announcement, 'example', PI_UPSTREAM_ACCOUNT_ID, ctx)).toBeUndefined()
+    expect(await resolveNamed(announcement, 'example', 'nope', ctx)).toBeUndefined()
+  })
+
+  it('tolerates a resolver failure for one named account', async () => {
+    const { announcement, ctx } = makeHarness({ resolve: new Error('resolve failed') })
+    expect(await resolveNamed(announcement, 'example', 'a', ctx)).toBeUndefined()
   })
 
   it('resolves the active backend of a virtual pool', async () => {

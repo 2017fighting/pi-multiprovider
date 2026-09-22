@@ -315,6 +315,23 @@ export interface MultiProviderServiceAnnouncement {
     callback: (event: ActiveAccountChangedEvent) => void,
   ): () => void
   /**
+   * Resolve one specific pooled account's credential, whether or not it is the
+   * active one. Added so a sibling extension can report account-scoped usage for
+   * every account in a pool (for example a `/usage` dashboard listing each
+   * subscription's quota), not just the account serving the session.
+   *
+   * Returns undefined for the upstream account (`pi:default`), whose credential
+   * belongs to Pi rather than to this store, and for an unknown provider or
+   * account id. OAuth refresh happens inside the store, under its lock, so
+   * consumers never read the private credential store directly.
+   */
+  resolveAccountAuth?(
+    providerId: string,
+    accountId: string,
+    ctx: MultiProviderServiceContext,
+    signal?: AbortSignal,
+  ): Promise<ActiveAccountAuth | undefined>
+  /**
    * Health snapshot for one pool's accounts, including local cooldown state.
    * `providerId` is a real provider id, or the composite
    * `${virtualProviderId}::${modelId}` for a virtual pool. Returns undefined when

@@ -207,7 +207,7 @@ The implementation was exercised against the actual sibling `pi-zro-provider` an
 | Second stored ZRO API key, no `ZRO_API_KEY` environment fallback | `ZRO_SECOND_OK` |
 | Priority-1 synthetic invalid key → priority-2 valid key, same `zro/deepseek-v4-flash-0731` stream | `ZRO_FAILOVER_OK` |
 
-The package also has direct Pi runtime probes and 31 deterministic tests covering scheduling, session account pinning, the service announcement, stream integrity, cancellation, secure storage, concurrent mutation, OAuth refresh locking, upstream auth scrubbing, upstream preference persistence, scheduler settings, pool-only availability, and simulated API-key/OAuth login flows.
+The package also has direct Pi runtime probes and 34 deterministic tests covering scheduling, session account pinning, the service announcement, stream integrity, cancellation, secure storage, concurrent mutation, OAuth refresh locking, upstream auth scrubbing, upstream preference persistence, scheduler settings, pool-only availability, and simulated API-key/OAuth login flows.
 
 ## Provider integration API
 
@@ -265,7 +265,21 @@ pi.events.on(MULTIPROVIDER_SERVICE_EVENT, value => {
 
 - `getActiveAccount(providerId, ctx)` — the session's effective account: the explicit `/switch-account` pin, else the scheduler's last selection while pool affinity is on. `undefined` means selection is automatic or upstream, and callers should fall back to their own credential resolution.
 - `resolveActiveAccountAuth(providerId, ctx, signal?)` — resolves (refreshing OAuth under the account-store lock when needed) the active stored account's credential as `{ accessToken, label, source? }`. Returns `undefined` for the upstream account or when nothing is active, so consumers keep their existing fallback chain.
+- `resolveAccountAuth(providerId, accountId, ctx, signal?)` — resolves one **named** account's credential, independent of which account is active. Returns the same `{ accessToken, label, source? }` shape, and `undefined` for the upstream account (`pi:default`), an unknown provider, or an unknown account id. Use this to report account-scoped state for a whole pool rather than just the account serving the session:
+
+  ```ts
+  const snapshot = await announcement.getPoolSnapshot?.("commandcode")
+  for (const account of snapshot?.accounts ?? []) {
+    if (account.id === "pi:default") continue // Pi owns the upstream credential
+    const auth = await announcement.resolveAccountAuth?.("commandcode", account.id, ctx)
+    if (auth === undefined) continue
+    // fetch /usage with auth.accessToken -> one row per account
+  }
+  ```
+
+  A stored account must **not** be resolved through Pi's `auth.json` or registry as a fallback: those hold the *upstream* credential, so doing so would attribute the upstream account's quota to a different account. When the pool cannot resolve a stored account, report that account as unconfigured rather than substituting another credential.
 - `onActiveAccountChanged(providerId, callback)` — fires after `/switch-account` pins or clears, and when a session start replays a recorded pin (resume, fork, or session switch). The event carries the triggering `ctx` and the new active account—`undefined` when the replayed decision returned the session to automatic selection—so account-scoped widgets repaint with the restored account instead of waiting for their next poll. Listeners attached after a replay can rely on their own session start, which observes the already-restored pin.
+- `getPoolSnapshot(providerId)` / `getMostRecentlyUsedAccount(providerId)` — credential-free account inventory with health. `getPoolSnapshot` returns every account's id, label, enabled flag, weight, priority, scheduler status (`ready` / `cooldown` / `disabled`), in-flight count, and last-lease time, which is what a `cooling` or `disabled` badge is drawn from. `getMostRecentlyUsedAccount` returns the account whose credential served the latest request, which differs from `getActiveAccount` when the pool includes the upstream credential.
 
 Credential values are never broadcast in the event payload itself; only extensions that invoke the resolver receive them, and the private `multiprovider-auth.json` store is never read directly by consumers.
 

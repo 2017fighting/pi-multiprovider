@@ -179,39 +179,57 @@ export function createServiceAnnouncement(deps: AnnouncementDependencies): Servi
     }
   }
 
+  // Resolves one stored account's credential by id, independent of which
+  // account is currently active. Shared by the active-account path and by
+  // resolveAccountAuth so both go through the same store/lock/refresh route.
+  const accountAuth = async (
+    providerId: string,
+    accountId: string,
+    ctx: MultiProviderServiceContext,
+    signal: AbortSignal | undefined,
+  ): Promise<ActiveAccountAuth | undefined> => {
+    if (accountId === PI_UPSTREAM_ACCOUNT_ID) return undefined
+    const integration = deps.getIntegration(providerId)
+    if (integration === undefined) return undefined
+    const base = deps.getBaseProvider(providerId, ctx)
+    if (base === undefined) return undefined
+    const model = ctx.model ?? base.getModels()[0]
+    if (model === undefined) return undefined
+    const accounts = await integration.accounts()
+    const account = accounts.find(candidate => candidate.id === accountId)
+    if (account === undefined) return undefined
+    const effectiveSignal = signal ?? new AbortController().signal
+    try {
+      const resolution = await integration.resolveAuth(account, effectiveSignal, {
+        provider: base,
+        model,
+        context: normalizeContext({ messages: [] }),
+        requestOptions: {},
+        signal: effectiveSignal,
+      })
+      const accessToken = resolution.auth.apiKey ?? bearerTokenFromHeaders(resolution.auth.headers)
+      if (accessToken === undefined || accessToken.trim() === '') return undefined
+      return {
+        accessToken: accessToken.trim(),
+        label: account.label,
+        ...(resolution.source === undefined ? {} : { source: resolution.source }),
+      }
+    } catch {
+      return undefined
+    }
+  }
+
   return {
     async getActiveAccount(providerId, ctx) {
       return activeAccount(providerId, ctx)
     },
     async resolveActiveAccountAuth(providerId, ctx, signal) {
       const active = await activeAccount(providerId, ctx)
-      if (active === undefined || active.id === PI_UPSTREAM_ACCOUNT_ID) return undefined
-      const integration = deps.getIntegration(providerId)
-      const base = deps.getBaseProvider(providerId, ctx)
-      if (integration === undefined || base === undefined) return undefined
-      const model = ctx.model ?? base.getModels()[0]
-      if (model === undefined) return undefined
-      const account = (await integration.accounts()).find(candidate => candidate.id === active.id)
-      if (account === undefined) return undefined
-      const effectiveSignal = signal ?? new AbortController().signal
-      try {
-        const resolution = await integration.resolveAuth(account, effectiveSignal, {
-          provider: base,
-          model,
-          context: normalizeContext({ messages: [] }),
-          requestOptions: {},
-          signal: effectiveSignal,
-        })
-        const accessToken = resolution.auth.apiKey ?? bearerTokenFromHeaders(resolution.auth.headers)
-        if (accessToken === undefined || accessToken.trim() === '') return undefined
-        return {
-          accessToken: accessToken.trim(),
-          label: active.label,
-          ...(resolution.source === undefined ? {} : { source: resolution.source }),
-        }
-      } catch {
-        return undefined
-      }
+      if (active === undefined) return undefined
+      return accountAuth(providerId, active.id, ctx, signal)
+    },
+    async resolveAccountAuth(providerId, accountId, ctx, signal) {
+      return accountAuth(providerId, accountId, ctx, signal)
     },
     onActiveAccountChanged(providerId, callback) {
       let callbacks = listeners.get(providerId)
